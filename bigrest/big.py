@@ -300,7 +300,7 @@ class BIG:
             {"Content-Range": f"0-{range_size}/0"})
         response = self.session.get(url)
         if response.status_code != 200 and response.status_code != 206:
-            raise RESTAPIError(self.esponse, self.debug)
+            raise RESTAPIError(response, self.debug)
         content_range = response.headers.get("Content-Range")
         range_start = range_size + 1
         range_end = range_start + range_size
