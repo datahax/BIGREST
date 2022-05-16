@@ -6,6 +6,7 @@
 # This is one exception to the external import rule.
 from __future__ import annotations
 from typing import Union
+import io
 import requests
 import time
 import urllib3
@@ -323,6 +324,60 @@ class BIG:
         self.session.headers.pop("Content-Range")
         self.session.headers.update({"Content-Type": "application/json"})
 
+    def upload_io(
+        self, path: str, filename_path: str, file_content: io.BytesIO
+    ):
+        """
+        Uploads a io.BytesIO to the device.
+
+        Sends an HTTP POST request to the iControl REST API.
+
+        Arguments:
+            path: HTTP path used in the HTTP request sent to the device.
+            filename_path: The name to use in the POST url
+            file_content: An io.BytesIO object with the data to upload
+
+        Exceptions:
+            RESTAPIError: Raised when iControl REST API returns an error.
+        """
+        if self.request_token or self.refresh_token is not None:
+            self._check_token()
+
+        self.session.headers.update(
+            {"Content-Type": "application/octet-stream"})
+
+        url = self._get_url(path)
+        url = f"{url}/{filename_path}"
+
+        range_start = 0
+        range_size = REST_API_MAXIMUM_CHUNK_SIZE - 1
+        range_end = range_size
+        size = file_content.getbuffer().nbytes
+
+        if size <= range_size:
+            self.session.headers.update(
+                {"Content-Range": f"{range_start}-{size}/{size + 1}"})
+
+            response = self.session.post(url, data=file_content.read(size + 1))
+            if response.status_code != 200:
+                raise RESTAPIError(response, self.debug)
+        else:
+            while size >= range_start:
+                range_end = min(range_end, size)
+                content_range = f"{range_start}-{range_end}/{size + 1}"
+                self.session.headers.update(
+                    {"Content-Range": content_range})
+                bytes_to_read = (range_end - range_start) + 1
+                response = self.session.post(
+                    url, data=file_content.read(bytes_to_read))
+                if response.status_code != 200:
+                    raise RESTAPIError(response, self.debug)
+                range_start = range_end + 1
+                range_end = range_end + range_size + 1
+
+        self.session.headers.pop("Content-Range")
+        self.session.headers.update({"Content-Type": "application/json"})
+
     def upload(self, path: str, filename: str) -> None:
         """
         Uploads a file to the device.
@@ -336,42 +391,9 @@ class BIG:
         Exceptions:
             RESTAPIError: Raised when iControl REST API returns an error.
         """
-
-        # Content-Range: <range-start>-<range-end>/<size>
-        if self.request_token or self.refresh_token is not None:
-            self._check_token()
-        self.session.headers.update(
-            {"Content-Type": "application/octet-stream"})
         filename_without_path = pathlib.PurePath(filename).name
-        url = self._get_url(path)
-        url = f"{url}/{filename_without_path}"
-        range_start = 0
-        range_size = REST_API_MAXIMUM_CHUNK_SIZE - 1
-        range_end = range_size
-        size = pathlib.Path(filename).stat().st_size - 1
         with open(filename, "rb") as file_:
-            if size <= range_size:
-                self.session.headers.update(
-                    {"Content-Range": f"{range_start}-{size}/{size + 1}"})
-                response = self.session.post(url, data=file_.read(size + 1))
-                if response.status_code != 200:
-                    raise RESTAPIError(response, self.debug)
-            else:
-                while size >= range_start:
-                    if range_end > size:
-                        range_end = size
-                    content_range = f"{range_start}-{range_end}/{size + 1}"
-                    self.session.headers.update(
-                        {"Content-Range": content_range})
-                    bytes_to_read = (range_end - range_start) + 1
-                    response = self.session.post(
-                        url, data=file_.read(bytes_to_read))
-                    if response.status_code != 200:
-                        raise RESTAPIError(response, self.debug)
-                    range_start = range_end + 1
-                    range_end = range_end + range_size + 1
-        self.session.headers.pop("Content-Range")
-        self.session.headers.update({"Content-Type": "application/json"})
+            self.upload_io(path, filename_without_path, file_)
 
     def example(self, path: str) -> RESTObject:
         """
